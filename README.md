@@ -67,7 +67,7 @@
 
 ---
 
-### PowerShell scripts
+### PowerShell scripts (In Administrator Mode)
 ```powershell
 # Full check
 iwr -useb https://raw.githubusercontent.com/ImElio/ValorantSecureCheck/main/scripts/ValorantSecureCheck.ps1 | iex
