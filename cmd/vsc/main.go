@@ -1,12 +1,15 @@
 package main
 
-// Thin orchestrator: parse flags, gather data, delegate rendering to pkg/cli.
-
 import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"syscall"
 
+	"valorantsecurecheck/internal/buildinfo"
 	"valorantsecurecheck/pkg/cli"
 	"valorantsecurecheck/pkg/system"
 )
@@ -17,23 +20,30 @@ var (
 	flagSummary  = flag.Bool("summary", false, "Print a compact READY/NOT READY summary")
 	flagExitCode = flag.Bool("exit-code", false, "Exit 0 if Valorant-ready, 1 otherwise")
 	flagVerbose  = flag.Bool("v", false, "Print warnings to stderr (TUI hides them)")
+	flagShowVer  = flag.Bool("version", false, "Print version and exit")
 )
 
 func main() {
 	flag.Parse()
+
+	if *flagShowVer {
+		fmt.Println(buildinfo.Version)
+		return
+	}
+
+	spawnBackgroundUpdater()
 
 	tpm, errTPM := system.GetTPMInfo()
 	sb, errSB := system.CheckSecureBoot()
 	sys, errSYS := system.GetSystemInfo()
 
 	checks := cli.BuildChecks(tpm, sb, sys)
-	canRun := cli.CanRunValorant(checks)
 	res := cli.Result{
 		TPM:        tpm,
 		SecureBoot: sb,
 		System:     sys,
 		Checks:     checks,
-		CanRun:     canRun,
+		CanRun:     cli.CanRunValorant(checks),
 	}
 
 	if *flagVerbose {
@@ -48,7 +58,6 @@ func main() {
 		}
 	}
 
-	// 4) Output mode
 	switch {
 	case *flagJSON:
 		cli.PrintJSON(res)
@@ -57,7 +66,7 @@ func main() {
 	case *flagSummary:
 		cli.PrintSummary(res)
 	default:
-		cli.RunTUI(res) // default: interactive view. J to toggle JSON, Q to quit
+		cli.RunTUI(res)
 	}
 
 	if *flagExitCode {
@@ -66,4 +75,25 @@ func main() {
 		}
 		os.Exit(1)
 	}
+}
+
+func spawnBackgroundUpdater() {
+	self, _ := os.Executable()
+	base := filepath.Dir(self)
+	updater := filepath.Join(base, "vsc-update.exe")
+	if _, err := os.Stat(updater); err != nil {
+		return 
+	}
+
+	cmd := exec.Command(updater,
+		"-owner", "ImElio",
+		"-repo", "ValorantSecureCheck",
+		"-bg-check",
+		"-quiet",
+		"-asset", "cli",
+	)
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	}
+	_ = cmd.Start()
 }
