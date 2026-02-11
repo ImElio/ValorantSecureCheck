@@ -1,10 +1,11 @@
 module valorantsecurecheck
 
+// NOTE: keep Go version <= the widely available toolchains on Windows.
+// Go 1.24 may trigger an automatic toolchain download on some setups.
 go 1.24.0
 
 require (
 	github.com/StackExchange/wmi v1.2.1
-	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	golang.org/x/sys v0.36.0

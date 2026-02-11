@@ -7,7 +7,7 @@ func PrintSummary(res Result) {
 		fmt.Println("READY — all checks passed")
 		return
 	}
-	for _, name := range []string{"TPM2", "SecureBoot", "CPU", "GPU", "RAM>=4GiB", "Motherboard"} {
+	for _, name := range []string{"TPM2", "SecureBoot", "CPU", "GPU", "RAM>=4GiB", "Motherboard", "Vanguard", "VGC"} {
 		if !res.Checks[name] {
 			fmt.Println("NOT READY — failing check:", humanName(name))
 			return
@@ -24,6 +24,10 @@ func humanName(k string) string {
 		return "Secure Boot"
 	case "RAM>=4GiB":
 		return "RAM ≥ 4 GiB"
+	case "Vanguard":
+		return "Riot Vanguard installed"
+	case "VGC":
+		return "Vanguard service (vgc)"
 	default:
 		return k
 	}

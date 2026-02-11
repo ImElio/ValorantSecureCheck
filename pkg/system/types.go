@@ -1,6 +1,5 @@
 package system
 
-// TPMInfo holds normalized TPM data coming from PowerShell Get-Tpm.
 type TPMInfo struct {
 	Present bool   `json:"present"`
 	Ready   bool   `json:"ready"`
@@ -10,13 +9,50 @@ type TPMInfo struct {
 	RawJSON string `json:"rawJson"`
 }
 
-// SecureBoot indicates whether UEFI Secure Boot is enabled.
 type SecureBoot struct {
 	Enabled bool   `json:"enabled"`
-	Source  string `json:"source"` // "registry" or "powershell"
+	Source  string `json:"source"`
 }
 
-// SystemInfo aggregates selected system hardware details.
+type SecureBootKeys struct {
+	Known              bool `json:"known"`
+	KeysPresentForSure bool `json:"keysPresentForSure"`
+	PK                 bool `json:"pk"`
+	KEK                bool `json:"kek"`
+	DB                 bool `json:"db"`
+	DBX                bool `json:"dbx"`
+}
+
+type BootInfo struct {
+	BIOSMode string `json:"biosMode"` // "UEFI" / "Legacy" / "Unknown"
+}
+
+type DiskInfo struct {
+	PartitionStyle string `json:"partitionStyle"` // "GPT" / "MBR" / "RAW" / "Unknown"
+}
+
+type VirtualizationInfo struct {
+	HypervisorPresent bool `json:"hypervisorPresent"`
+	HyperVEnabled     bool `json:"hyperVEnabled"`
+	VBS_Enabled       bool `json:"vbsEnabled"`
+}
+
+type ServiceStatus struct {
+	Exists  bool   `json:"exists"`
+	Running bool   `json:"running"`
+	Start   string `json:"start"` // Automatic/Manual/Disabled/Unknown
+	Raw     string `json:"raw"`
+}
+
+type VanguardInfo struct {
+	Installed     bool          `json:"installed"`
+	InstallPath   string        `json:"installPath"`
+	Version       string        `json:"version"`
+	VGC           ServiceStatus `json:"vgc"`
+	VGK           ServiceStatus `json:"vgk"`
+	DriverPresent bool          `json:"driverPresent"`
+}
+
 type SystemInfo struct {
 	CPU         string `json:"cpu"`
 	GPU         string `json:"gpu"`

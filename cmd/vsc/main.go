@@ -35,15 +35,26 @@ func main() {
 
 	tpm, errTPM := system.GetTPMInfo()
 	sb, errSB := system.CheckSecureBoot()
+
+	keys, errKeys := system.GetSecureBootKeys(sb)
+	boot, errBoot := system.GetBootInfo()
+	disk, errDisk := system.GetBootDiskInfo()
+	virt, errVirt := system.GetVirtualizationInfo()
+	vg, errVG := system.GetVanguardInfo()
 	sys, errSYS := system.GetSystemInfo()
 
-	checks := cli.BuildChecks(tpm, sb, sys)
+	checks := cli.BuildChecks(tpm, sb, sys, boot, disk, virt, vg, keys)
 	res := cli.Result{
-		TPM:        tpm,
-		SecureBoot: sb,
-		System:     sys,
-		Checks:     checks,
-		CanRun:     cli.CanRunValorant(checks),
+		TPM:            tpm,
+		SecureBoot:     sb,
+		SecureBootKeys: keys,
+		Boot:           boot,
+		Disk:           disk,
+		Virt:           virt,
+		Vanguard:       vg,
+		System:         sys,
+		Checks:         checks,
+		CanRun:         cli.CanRunValorant(checks),
 	}
 
 	if *flagVerbose {
@@ -56,16 +67,35 @@ func main() {
 		if errSYS != nil {
 			fmt.Fprintln(os.Stderr, "[warn] System info error:", errSYS)
 		}
+		if errKeys != nil {
+			fmt.Fprintln(os.Stderr, "[warn] SecureBoot keys check error:", errKeys)
+		}
+		if errBoot != nil {
+			fmt.Fprintln(os.Stderr, "[warn] Boot info error:", errBoot)
+		}
+		if errDisk != nil {
+			fmt.Fprintln(os.Stderr, "[warn] Disk info error:", errDisk)
+		}
+		if errVirt != nil {
+			fmt.Fprintln(os.Stderr, "[warn] Virtualization info error:", errVirt)
+		}
+		if errVG != nil {
+			fmt.Fprintln(os.Stderr, "[warn] Vanguard info error:", errVG)
+		}
 	}
 
 	switch {
 	case *flagJSON:
 		cli.PrintJSON(res)
+
 	case *flagTable:
 		cli.PrintTable(res)
+
 	case *flagSummary:
 		cli.PrintSummary(res)
+
 	default:
+		system.TrySetConsoleSize(150, 42)
 		cli.RunTUI(res)
 	}
 
@@ -82,7 +112,7 @@ func spawnBackgroundUpdater() {
 	base := filepath.Dir(self)
 	updater := filepath.Join(base, "vsc-update.exe")
 	if _, err := os.Stat(updater); err != nil {
-		return 
+		return
 	}
 
 	cmd := exec.Command(updater,

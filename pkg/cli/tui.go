@@ -1,36 +1,31 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 )
 
+type clearReportMsg struct{}
 
 func RunTUI(res Result) {
-	pretty, _ := json.MarshalIndent(res, "", "  ")
-	m := newModel(res, string(pretty))
+	m := newModel(res)
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Println("TUI error:", err)
 	}
 }
 
-
 type model struct {
-	res      Result
-	json     string
-	showJSON bool
-	ready    bool
-	width    int
-	height   int
-	vp       viewport.Model
+	res        Result
+	w, h       int
+	reportPath string
 }
 
-func newModel(res Result, jsonPretty string) model { return model{res: res, json: jsonPretty} }
-func (m model) Init() tea.Cmd                      { return nil }
+func newModel(res Result) model { return model{res: res} }
+func (m model) Init() tea.Cmd   { return nil }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -39,131 +34,295 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
 		case "j":
-			m.showJSON = !m.showJSON
-			if m.showJSON {
-				m.vp.SetContent(m.json)
+			if p, err := ExportJSONToFileAndOpen(m.res); err == nil {
+				m.reportPath = p
+			} else {
+				m.reportPath = "Export failed"
 			}
-			return m, nil
-		case "up", "k":
-			if m.showJSON {
-				m.vp.LineUp(1)
-			}
-			return m, nil
-		case "down":
-			if m.showJSON {
-				m.vp.LineDown(1)
-			}
-			return m, nil
+			return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return clearReportMsg{} })
 		}
+
+	case clearReportMsg:
+		m.reportPath = ""
+		return m, nil
+
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		if !m.ready {
-			m.ready = true
-			w, h := max(m.width-10, 10), max(m.height-10, 5)
-			m.vp = viewport.New(w, h)
-			m.vp.SetContent(m.json)
-		} else {
-			m.vp.Width = max(m.width-10, 10)
-			m.vp.Height = max(m.height-10, 5)
-		}
+		m.w, m.h = msg.Width, msg.Height
 	}
 	return m, nil
 }
 
 func (m model) View() string {
-	if !m.ready {
+	if m.w == 0 || m.h == 0 {
 		return "Loading…"
 	}
 
-	title := styleTitle().Render("ValorantSecureCheck")
-	sub := styleSub().Render("Press J to toggle JSON • Q to quit")
-	author := styleAuthor().Render("Author: ImElio")
+	padV, padH := 1, 2
+	if m.h < 28 {
+		padV, padH = 0, 1
+	}
 
-	status := func(b bool) string {
+	header := lipgloss.JoinVertical(
+		lipgloss.Left,
+		titleStyle().Render("ValorantSecureCheck"),
+		subStyle().Render("J = export report (opens Notepad)  •  Q = quit"),
+	)
+	if m.reportPath != "" {
+		header = lipgloss.JoinVertical(lipgloss.Left, header, hintStyle().Render("Report: "+m.reportPath))
+	}
+
+	body := m.renderBody(padV, padH)
+
+	page := lipgloss.NewStyle().Padding(padV, padH).Render(
+		lipgloss.JoinVertical(lipgloss.Left, header, "", body),
+	)
+
+	return fitHeight(page, m.h)
+}
+
+func (m model) renderBody(padV, padH int) string {
+	gap := 3
+
+	safe := 2 // prevents right border clipping in conhost
+	innerW := m.w - padH*2 - safe
+	innerH := m.h - padV*2
+
+	if innerW < 40 {
+		innerW = 40
+	}
+	if innerH < 10 {
+		innerH = 10
+	}
+
+	mode := "full"
+	if innerH < 30 {
+		mode = "compact"
+	}
+	if innerH < 20 {
+		mode = "minimal"
+	}
+
+	minCol := 60
+	colW := (innerW - gap) / 2
+	stack := colW < minCol || innerW < (minCol*2+gap)
+
+	if mode == "minimal" {
+		boxW := max(innerW-1, 30) // -1 to avoid edge overflow
+		checksBox := boxStyle().Width(boxW)
+		checks := m.renderChecks(boxW - 6)
+
+		hint := hintStyle().Render("Tip: press J to export the full report.")
+		return checksBox.Render(sectionStyle().Render("Checks") + "\n\n" + checks + "\n\n" + hint)
+	}
+
+	if stack {
+		boxW := max(innerW-1, 30) // -1 to avoid edge overflow
+		checksBox := boxStyle().Width(boxW)
+		detailsBox := boxStyle().Width(boxW)
+
+		left := checksBox.Render(sectionStyle().Render("Checks") + "\n\n" + m.renderChecks(boxW-6))
+		right := detailsBox.Render(sectionStyle().Render("Details") + "\n\n" + m.renderDetails(boxW-6, mode == "full"))
+
+		return lipgloss.JoinVertical(lipgloss.Left, left, "", right)
+	}
+
+	rightW := colW - 3
+	if rightW < 40 {
+		rightW = 40
+	}
+	leftW := innerW - gap - rightW
+	if leftW < 40 {
+		boxW := max(innerW-1, 30)
+		checksBox := boxStyle().Width(boxW)
+		detailsBox := boxStyle().Width(boxW)
+
+		left := checksBox.Render(sectionStyle().Render("Checks") + "\n\n" + m.renderChecks(boxW-6))
+		right := detailsBox.Render(sectionStyle().Render("Details") + "\n\n" + m.renderDetails(boxW-6, mode == "full"))
+		return lipgloss.JoinVertical(lipgloss.Left, left, "", right)
+	}
+
+	checksBox := boxStyle().Width(leftW)
+	detailsBox := boxStyle().Width(rightW)
+
+	left := checksBox.Render(sectionStyle().Render("Checks") + "\n\n" + m.renderChecks(leftW-6))
+	right := detailsBox.Render(sectionStyle().Render("Details") + "\n\n" + m.renderDetails(rightW-6, mode == "full"))
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
+}
+
+func (m model) renderChecks(wrapW int) string {
+	ok := func(b bool) string {
 		if b {
-			return styleOK().Render("✓ OK")
+			return okStyle().Render("✓")
 		}
-		return styleNO().Render("✗ Not OK")
+		return noStyle().Render("✗")
 	}
 
-	// Checks panel
-	lines := []string{
-		fmt.Sprintf("%-14s %s", "TPM 2.0", status(m.res.Checks["TPM2"])),
-		fmt.Sprintf("%-14s %s", "Secure Boot", status(m.res.Checks["SecureBoot"])),
-		fmt.Sprintf("%-14s %s", "CPU", status(m.res.Checks["CPU"])),
-		fmt.Sprintf("%-14s %s", "GPU", status(m.res.Checks["GPU"])),
-		fmt.Sprintf("%-14s %s", "RAM ≥ 4 GiB", status(m.res.Checks["RAM>=4GiB"])),
-		fmt.Sprintf("%-14s %s", "Motherboard", status(m.res.Checks["Motherboard"])),
+	readyLine := ""
+	if m.res.CanRun {
+		readyLine = okStyle().Render("READY") + "  Valorant should launch"
+	} else {
+		readyLine = noStyle().Render("NOT READY") + "  Missing requirement(s)"
 	}
-	checks := lipgloss.JoinVertical(lipgloss.Left, lines...)
 
-	// Details panel
+	core := []string{
+		fmt.Sprintf("%s TPM 2.0", ok(m.res.Checks["TPM2"])),
+		fmt.Sprintf("%s Secure Boot", ok(m.res.Checks["SecureBoot"])),
+		fmt.Sprintf("%s UEFI", ok(m.res.Checks["UEFI"])),
+		fmt.Sprintf("%s Disk GPT", ok(m.res.Checks["GPT"])),
+		fmt.Sprintf("%s Vanguard installed", ok(m.res.Checks["Vanguard"])),
+		fmt.Sprintf("%s vgc service exists", ok(m.res.Checks["VGCExists"])),
+	}
+
+	diag := []string{
+		fmt.Sprintf("%s vgc running", ok(m.res.Checks["VGCRunning"])),
+		fmt.Sprintf("%s vgk exists", ok(m.res.Checks["VGKExists"])),
+		fmt.Sprintf("%s VBS disabled", ok(m.res.Checks["VBSDisabled"])),
+		fmt.Sprintf("%s Hyper-V disabled", ok(m.res.Checks["HyperVOff"])),
+		fmt.Sprintf("%s Secure Boot keys", ok(m.res.Checks["SBKeys"])),
+	}
+
+	block := strings.Join([]string{
+		sectionStyle().Render("Valorant requirements"),
+		readyLine,
+		"",
+		strings.Join(core, "\n"),
+		"",
+		sectionStyle().Render("Diagnostics"),
+		"",
+		strings.Join(diag, "\n"),
+	}, "\n")
+
+	return wrapText(block, wrapW)
+}
+
+func (m model) renderDetails(wrapW int, includeHardware bool) string {
 	tpmVer := m.res.TPM.Version
 	if tpmVer == "" && m.res.TPM.IsV2 {
 		tpmVer = "2.0"
 	}
-	details := []string{
-		fmt.Sprintf("%s  %v / %v", styleKey().Render("TPM Present/Ready"), m.res.TPM.Present, m.res.TPM.Ready),
-		fmt.Sprintf("%s  %s", styleKey().Render("TPM Version"), styleVal().Render(tpmVer)),
-		fmt.Sprintf("%s  %s", styleKey().Render("TPM Vendor"), styleVal().Render(m.res.TPM.Vendor)),
-		fmt.Sprintf("%s  %v", styleKey().Render("Secure Boot Enabled"), m.res.SecureBoot.Enabled),
-		fmt.Sprintf("%s  %s", styleKey().Render("CPU"), styleVal().Render(m.res.System.CPU)),
-		fmt.Sprintf("%s  %s", styleKey().Render("GPU"), styleVal().Render(m.res.System.GPU)),
-		fmt.Sprintf("%s  %d", styleKey().Render("RAM (GiB)"), m.res.System.RAMGiB),
-		fmt.Sprintf("%s  %s", styleKey().Render("Motherboard"), styleVal().Render(m.res.System.Motherboard)),
-		fmt.Sprintf("%s  %s", styleKey().Render("OS"), styleVal().Render(m.res.System.OS)),
+
+	sbKeys := "present"
+	if m.res.SecureBootKeys.Known {
+		sbKeys = fmt.Sprintf("PK=%v KEK=%v db=%v dbx=%v",
+			m.res.SecureBootKeys.PK, m.res.SecureBootKeys.KEK, m.res.SecureBootKeys.DB, m.res.SecureBootKeys.DBX)
+	} else if m.res.SecureBoot.Enabled {
+		sbKeys = "present (Secure Boot ON)"
+	} else {
+		sbKeys = "unknown"
 	}
-	det := lipgloss.JoinVertical(lipgloss.Left, details...)
 
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Padding(1, 2).
-		Width(min(70, m.width-10))
+	keyW := 14
+	if wrapW < 50 {
+		keyW = 12
+	}
 
-	mainCol := lipgloss.JoinVertical(lipgloss.Left, box.Render(checks), "", box.Render(det))
+	lineKV := func(k, v string) string {
+		kf := keyStyle().Render(padRight(k, keyW))
+		vw := max(wrapW-keyW-1, 10)
+		val := wrapText(v, vw)
+		val = indentWrapped(val, keyW+1)
+		return kf + " " + strings.TrimPrefix(val, strings.Repeat(" ", keyW+1))
+	}
 
-	content := lipgloss.Place(m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		lipgloss.JoinVertical(lipgloss.Center, title, sub, author, "", mainCol),
+	services := fmt.Sprintf("vgc=%v (%s)  vgk=%v (%s)",
+		m.res.Vanguard.VGC.Running, m.res.Vanguard.VGC.Start,
+		m.res.Vanguard.VGK.Running, m.res.Vanguard.VGK.Start,
 	)
 
-	if m.showJSON {
-		jsonTitle := lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true).
-			Render("JSON (VIEW)  —  ↑/↓ scroll, J to close")
-		overlay := lipgloss.Place(m.width, m.height,
-			lipgloss.Center, lipgloss.Center,
-			lipgloss.JoinVertical(lipgloss.Center,
-				jsonTitle,
-				lipgloss.NewStyle().
-					Border(lipgloss.NormalBorder()).
-					Padding(0, 1).
-					Render(m.vp.View()),
-			),
-		)
-		return overlay
+	main := []string{
+		lineKV("TPM", fmt.Sprintf("%v/%v v%s (%s)", m.res.TPM.Present, m.res.TPM.Ready, tpmVer, m.res.TPM.Vendor)),
+		lineKV("Secure Boot", fmt.Sprintf("%v (%s)", m.res.SecureBoot.Enabled, m.res.Boot.BIOSMode)),
+		lineKV("SB Keys", sbKeys),
+		lineKV("Disk", m.res.Disk.PartitionStyle),
+		lineKV("Vanguard", fmt.Sprintf("%v  v%s", m.res.Vanguard.Installed, m.res.Vanguard.Version)),
+		lineKV("Services", services),
 	}
-	return content
+
+	if !includeHardware {
+		return strings.Join(main, "\n")
+	}
+
+	hw := []string{
+		"",
+		sectionStyle().Render("Hardware"),
+		"",
+		lineKV("CPU", m.res.System.CPU),
+		lineKV("GPU", m.res.System.GPU),
+		lineKV("RAM", fmt.Sprintf("%d GiB", m.res.System.RAMGiB)),
+		lineKV("Board", m.res.System.Motherboard),
+		lineKV("OS", m.res.System.OS),
+	}
+
+	warns := []string{}
+	if m.res.Virt.VBS_Enabled {
+		warns = append(warns, "• VBS enabled: can cause Vanguard issues on some setups")
+	}
+	if m.res.Virt.HypervisorPresent && !m.res.Virt.HyperVEnabled {
+		warns = append(warns, "• Hypervisor present: possible WSL / Device Guard / VM")
+	}
+	if len(warns) > 0 {
+		hw = append(hw, "", warnStyle().Render("Warnings"), wrapText(strings.Join(warns, "\n"), wrapW))
+	}
+
+	return strings.Join(append(main, hw...), "\n")
 }
 
-
-func styleTitle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true) }
-func styleSub() lipgloss.Style    { return lipgloss.NewStyle().Foreground(lipgloss.Color("8")) }
-func styleAuthor() lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color("14")) }
-func styleOK() lipgloss.Style     { return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true) }
-func styleNO() lipgloss.Style     { return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true) }
-func styleKey() lipgloss.Style    { return lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Bold(true) }
-func styleVal() lipgloss.Style    { return lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true) }
-
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+func boxStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 2)
 }
+
+func titleStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+}
+func subStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(lipgloss.Color("8")) }
+func hintStyle() lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color("10")) }
+func okStyle() lipgloss.Style   { return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true) }
+func noStyle() lipgloss.Style   { return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true) }
+func keyStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Bold(true) }
+func sectionStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+}
+func warnStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+func wrapText(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	return lipgloss.NewStyle().Width(width).Render(s)
+}
+
+func padRight(s string, w int) string {
+	if len(s) >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-len(s))
+}
+
+func indentWrapped(s string, indent int) string {
+	prefix := strings.Repeat(" ", indent)
+	lines := strings.Split(s, "\n")
+	for i := 1; i < len(lines); i++ {
+		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fitHeight(s string, h int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= h {
+		return s
+	}
+	return strings.Join(lines[:h], "\n")
 }
