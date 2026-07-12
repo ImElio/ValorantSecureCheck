@@ -1,5 +1,11 @@
 # ValorantSecureCheck
 
+### This project is archived.
+
+### Riot Vanguard now performs these compatibility checks internally, making this utility largely unnecessary.
+
+### The source code remains available for educational purposes.
+
 [![Release](https://img.shields.io/github/v/release/ImElio/ValorantSecureCheck?style=for-the-badge)](https://github.com/ImElio/ValorantSecureCheck/releases)
 [![Issues](https://img.shields.io/github/issues/ImElio/ValorantSecureCheck?style=for-the-badge)](https://github.com/ImElio/ValorantSecureCheck/issues)
 [![License](https://img.shields.io/github/license/ImElio/ValorantSecureCheck?style=for-the-badge)](LICENSE)
